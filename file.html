@@ -2761,7 +2761,7 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
 </style>
 <script id="aec-network-hardening">
 (function(){
- const notice=document.createElement('div');notice.id='aecNetworkNotice';notice.innerHTML='<b>🌐 Tips koneksi lintas perangkat</b><br>Gunakan Buat Ruang pada satu perangkat, lalu bagikan kode 6 karakter kepada perangkat lain dan pilih Gabung Ruang. Kedua perangkat harus online dan host harus tetap membuka game. Koneksi memakai PeerJS dan STUN; jaringan tertentu yang membatasi WebRTC mungkin tetap memerlukan server TURN khusus.';
+ const notice=document.createElement('div');notice.id='aecNetworkNotice';notice.innerHTML='<b>🌐 Tips koneksi lintas perangkat</b><br>Gunakan Buat Ruang pada satu perangkat, lalu bagikan kode 6 karakter kepada perangkat lain dan pilih Gabung Ruang. Kedua perangkat harus online dan host harus tetap membuka game. Koneksi multiplayer memakai Supabase Realtime. Pastikan project Supabase aktif dan layanan Realtime dapat dijangkau dari jaringan perangkat.';
  const target=document.getElementById('mpArea');
  if(target){const parent=target.parentElement;if(parent)parent.insertBefore(notice,target)}
  const form=document.getElementById('aecAuthForm');
@@ -3705,7 +3705,7 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
      }
    });
    await new Promise((resolve,reject)=>{
-     let settled=false;const timer=setTimeout(()=>{if(!settled){settled=true;reject(new Error('Supabase Realtime belum merespons dalam 12 detik. Layar tetap responsif; periksa koneksi internet, status Realtime, dan kebijakan akses project lalu coba lagi.'))}},12000);
+     let settled=false;const timer=setTimeout(()=>{if(!settled){settled=true;reject(new Error('Supabase Realtime tidak merespons dalam 8 detik. Room belum dibuat. Periksa URL dan publishable key Supabase, status layanan Realtime, serta koneksi internet; lalu tekan Coba lagi.'))}},8000);
      channel.subscribe(status=>{
        if(status==='SUBSCRIBED'&&!settled){settled=true;clearTimeout(timer);resolve()}
        else if((status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED')&&!settled){settled=true;clearTimeout(timer);reject(new Error('Channel Supabase gagal: '+status))}
@@ -3753,7 +3753,7 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
      await openRoomChannel(m.code,true);
      window.state.onlinePlayers=[{id:m.playerId,name,host:true,team:m.__gameMode==='team'?1:null,pos:0,bronze:0,silver:0,gold:0,diamond:0,properties:{},passedStart:false,inJail:false,jailTurns:0,freeCards:0,bankDebt:{bronze:0,silver:0,gold:0},missedSpins:0}];
      renderRoomArea(m.code,true);publishRoom(m.code,m.__isPrivate,m.__gameMode).catch(e=>{console.warn('Room listing sync:',e);toast('Room aktif, tetapi daftar room publik belum tersinkron: '+e.message)});
-   }catch(e){m.online=false;m.host=false;cleanupTransport();area.innerHTML='<div class="mp-status">Gagal membuat room: '+String(e.message||e)+'</div><button class="btn green" onclick="mpCreate()">Coba lagi</button>'}
+   }catch(e){m.online=false;m.host=false;cleanupTransport();area.innerHTML='<div class="mp-status" role="alert"><b>Room belum berhasil dibuat.</b><br>'+String(e.message||e)+'</div><button class="btn green" onclick="mpCreate()">Coba lagi</button><button class="btn" onclick="mpOnlineMenu()">Kembali</button>'}
    finally{m.__aecCreatingRoom=false}
  };
  async function joinRoom(name,code,reconnect,spectator){
