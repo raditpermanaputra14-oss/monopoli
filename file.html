@@ -1813,13 +1813,13 @@ if("speechSynthesis" in window){window.speechSynthesis.getVoices();window.speech
 .mp-panel{background:#202a38;border:1px solid #3b475a;border-radius:12px;padding:12px;margin-top:10px}.mp-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.mp-actions .btn{min-height:44px}.mp-code{font-size:28px;letter-spacing:6px;text-align:center;color:#f4c84e;font-weight:900;padding:12px;background:#111722;border-radius:10px;user-select:all}.mp-status{font-size:11px;color:#c2cad6;line-height:1.55}.mp-list{display:grid;gap:6px;margin-top:8px}.mp-player{display:flex;justify-content:space-between;gap:8px;padding:8px;border-radius:8px;background:#252e3b}.mp-turn-timer{font-size:30px;font-weight:900;text-align:center;color:#f4c84e;margin:8px 0}.mp-turn-timer.warn{color:#ff7066}.mp-turn-note{text-align:center;font-size:12px;color:#c2cad6}.mp-spin-wait{opacity:.85;text-align:center;padding:10px;border:1px dashed #465266;border-radius:9px;margin-top:7px}.mp-copy{width:100%;margin-top:7px}.mp-chat-panel{margin-top:10px}.mp-chat-messages{height:180px;min-height:120px;overflow:auto;background:#111722;border:1px solid #3b475a;border-radius:9px;padding:8px;display:flex;flex-direction:column;gap:6px;scroll-behavior:smooth}.mp-chat-msg{padding:6px 8px;border-radius:8px;background:#202a38}.mp-chat-msg b{color:#f4c84e;white-space:nowrap}.mp-chat-msg span{color:#e4e8ef;overflow-wrap:anywhere;word-break:break-word}.mp-chat-row{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:7px}.mp-chat-row input{min-width:0;background:#111722;color:#fff;border:1px solid #3b475a;border-radius:8px;padding:9px}.mp-admin{display:flex;gap:4px;margin-left:auto}.mp-mini{border:0;border-radius:6px;padding:4px 7px;font-size:10px;font-weight:800;cursor:pointer}.mp-mini.kick{background:#c68a36;color:#17120b}.mp-mini.ban{background:#a43b45;color:#fff}
 </style>
 <script id="multiplayerPatch">
-/* HOST-AUTHORITATIVE ONLINE MULTIPLAYER: reconnect, kick/ban, 3 missed spins, shared events */
+/* HOST-AUTHORITATIVE ONLINE MULTIPLAYER: Supabase Realtime transport, reconnect, kick/ban, 3 missed spins, shared events */
 (function(){
- const PEER_URL='https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js',TURN=30000,ROOM=300000;
+ const TURN=30000,ROOM=300000;
  const mp={mode:'bot',online:false,host:false,peer:null,conn:null,connections:[],code:'',name:'',playerId:'',roomDeadline:0,turnDeadline:0,timer:null,roomTimer:null,hostTimeout:null,chat:[],bannedNames:{},reconnectStates:{},pendingRemoval:null,spectators:[],__isPrivate:false,__gameMode:'solo'};
  window.mp=mp; // Expose the room identity for per-device HUD rendering.
  const oldEnter=window.enterGame,oldSpin=window.spin,oldRender=window.render,oldLog=window.log,oldAnn=window.showGameAnnouncement,oldPurchase=window.showPurchaseAnnouncement;
- function loadScript(src,cb){if(window.Peer)return cb();const s=document.createElement('script');s.src=src;s.onload=cb;s.onerror=()=>toast('❌ Library online gagal dimuat.');document.head.appendChild(s)}
+ function loadScript(src,cb){if(typeof cb==='function')cb()}
  function safe(v){return String(v||'').trim().replace(/[^\p{L}\p{N} _-]/gu,'').slice(0,18)}
  function id(){return mp.playerId||mp.peer?.id||''}
  function ps(){return state.onlinePlayers||[]}
@@ -2522,6 +2522,9 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
  window.showStatistics=function(){if(mp.online){const rows=ps().slice().sort((a,b)=>wealthFeature(b)-wealthFeature(a)).map((p,i)=>`<tr><td>${i+1}</td><td>${String(p.name).replace(/[<>]/g,'')}</td><td>${formatValue(wealthFeature(p))}</td><td>${Object.keys(p.properties||{}).length}</td><td>${p.diamond||0}</td></tr>`).join('');openModal(`<h2>📊 Analisis Kekayaan Pemain Online</h2><table class="certificate"><tr><th>Rank</th><th>Pemain</th><th>Kekayaan</th><th>Properti</th><th>💎</th></tr>${rows}</table><button class="btn" onclick="closeModal()">Tutup</button>`)}else oldShowStatsFeature()};
  setInterval(syncFeatureUI,700);
  installLobby();bindLocalStartButton(document);
+  // Expose the final authoritative packet handler for the Supabase Realtime transport.
+  window.__aecHandleRoomPacket=function(data,connection){try{return receive(data,connection)}catch(e){console.error('Room packet error:',e)}};
+  window.__aecRemoveRoomPlayer=function(pid,reason){try{return removeOnlinePlayer(pid,reason||'disconnect',false)}catch(e){console.warn(e)}};
 })();
 </script>
 
@@ -3424,7 +3427,7 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
     st.diamond=(Number(st.diamond)||0)+amount;repaint();return true;
   };
   // Wrap the shared host message receiver. The request is only accepted for a connected player ID.
-  // The game receiver is in a closure, so use PeerJS data listener on host connections as well.
+  // Legacy transport hook retained as an inert compatibility block; Supabase Realtime handles room packets.
   function installConnectionHook(){
     const m=window.mp;if(!m||m.__aecDiamondHook)return;
     m.__aecDiamondHook=true;
@@ -3452,7 +3455,7 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
     return result;
   };
   // In this game, the receive function is a global lexical function rather than window.receive.
-  // Hook the Peer connection registration before creating the room by wrapping Peer constructor.
+  // PeerJS transport is disabled; the active room transport is Supabase Realtime.
   if(typeof window.Peer==='function'&&!window.Peer.__aecWrapped){
     const RealPeer=window.Peer;
     function WrappedPeer(...args){
@@ -3644,5 +3647,121 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
      await refreshSocial();window.aecToast?.('Permintaan pertemanan dikirim.');window.aecFriends();
    }catch(e){window.aecToast?.('Tidak dapat menambah teman: '+(e.message||e))}
  };
+})();
+</script>
+
+
+<script id="aec-supabase-realtime-only-v1">
+(function(){
+ 'use strict';
+ const toast=m=>(window.aecToast||window.toast||function(x){alert(x)})(m);
+ const $=id=>document.getElementById(id);
+ const safeName=v=>String(v||'').trim().replace(/[^\p{L}\p{N} _-]/gu,'').slice(0,18);
+ const uuid=()=>crypto.randomUUID?crypto.randomUUID():'p-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10);
+ const wait=(ms)=>new Promise(r=>setTimeout(r,ms));
+ let roomChannel=null, roomHostId=null, roomMyId=null, roomIsHost=false, roomReady=false;
+ let hostConnections=new Map(), roomSubTimer=null;
+ function client(){return window.aecSupabase||null}
+ function sendWire(to,data){
+   if(!roomChannel||!roomReady)throw new Error('Koneksi Supabase Realtime belum siap.');
+   return roomChannel.send({type:'broadcast',event:'wire',payload:{from:roomMyId,to:to||'*',data}});
+ }
+ function pseudoConnection(pid){
+   const c={open:true,playerId:pid,_closed:false,_handlers:{},send(data){if(this._closed)return;try{sendWire(pid,data)}catch(e){console.warn('Supabase room send:',e)}},on(event,fn){(this._handlers[event]||(this._handlers[event]=[])).push(fn);return this},close(){if(this._closed)return;this._closed=true;this.open=false;(this._handlers.close||[]).forEach(fn=>{try{fn()}catch(_){}})}};
+   return c;
+ }
+ function renderRoomArea(code,host){
+   const m=window.mp,area=$('mpArea');if(!m||!area)return;
+   area.innerHTML='<div class="mp-code">'+code+'</div><div class="mp-status">'+(m.__isPrivate?'🔒 RUANG PRIVAT':'🌐 RUANG PUBLIK')+' · '+(m.__gameMode==='team'?'⚔️ MODE TEAM':'🎲 MODE SOLO')+' · Supabase Realtime</div><button class="btn blue mp-copy" onclick="mpCopyCode()">📋 Salin Kode</button><div id="mpRoomTimer" class="mp-status" style="text-align:center;margin-top:7px"></div><div id="mpLobbyNet" class="mp-list"></div>'+(host?'<button class="btn primary" style="width:100%;margin-top:8px" onclick="mpHostStart()">▶️ Mulai Permainan</button>':'<div class="mp-status">Menunggu host dan pemain lain…</div>');
+   try{window.roomTimer?.();window.renderLobbyNet?.();window.panel?.()}catch(_){ }
+ }
+ async function openRoomChannel(code,isHost){
+   const c=client();if(!c)throw new Error('Supabase belum terhubung. Login ulang dan periksa konfigurasi project.');
+   try{if(roomChannel)c.removeChannel(roomChannel)}catch(_){ }
+   roomMyId=roomMyId||uuid();roomIsHost=!!isHost;roomReady=false;hostConnections=new Map();
+   const channel=c.channel('sos-room-'+String(code).toUpperCase(),{config:{broadcast:{self:false},presence:{key:roomMyId}}});
+   roomChannel=channel;
+   channel.on('broadcast',{event:'wire'},async({payload})=>{
+     if(!payload||!payload.data||payload.from===roomMyId)return;
+     const from=String(payload.from||''),to=String(payload.to||'*');
+     if(roomIsHost){
+       if(to!==roomMyId&&to!=='*')return;
+       let conn=hostConnections.get(from);
+       if(!conn){conn=pseudoConnection(from);hostConnections.set(from,conn);conn.playerId=from;window.mp.connections.push(conn)}
+       try{window.__aecHandleRoomPacket?.(payload.data,conn)}catch(e){console.error(e)}
+     }else{
+       if(to!==roomMyId&&to!=='*')return;
+       try{window.__aecHandleRoomPacket?.(payload.data,window.mp.conn)}catch(e){console.error(e)}
+     }
+   });
+   channel.on('presence',{event:'sync'},()=>{
+     const state=channel.presenceState();
+     if(roomIsHost){
+       const alive=new Set(Object.values(state).flat().map(x=>x?.id).filter(Boolean));
+       for(const [pid,conn] of hostConnections){if(!alive.has(pid)){hostConnections.delete(pid);try{window.__aecRemoveRoomPlayer?.(pid,'disconnect')}catch(_){conn.close()}}}
+     }else if(!roomHostId){
+       const all=Object.values(state).flat();const host=all.find(x=>x&&x.host&&x.id!==roomMyId);
+       if(host){roomHostId=host.id;sendWire(roomHostId,{type:'spectate',name:window.mp.name,id:roomMyId})}
+     }
+   });
+   await new Promise((resolve,reject)=>{
+     let settled=false;const timer=setTimeout(()=>{if(!settled){settled=true;reject(new Error('Supabase Realtime tidak merespons dalam 12 detik. Periksa Realtime dan kebijakan akses project.'))}},12000);
+     channel.subscribe(status=>{
+       if(status==='SUBSCRIBED'&&!settled){settled=true;clearTimeout(timer);resolve()}
+       else if((status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED')&&!settled){settled=true;clearTimeout(timer);reject(new Error('Channel Supabase gagal: '+status))}
+     });
+   });
+   roomReady=true;
+   await channel.track({id:roomMyId,host:roomIsHost,name:window.mp.name||'Pemain',joined_at:new Date().toISOString()});
+   return channel;
+ }
+ function cleanupTransport(){
+   roomReady=false;roomHostId=null;roomMyId=null;roomIsHost=false;hostConnections.clear();
+   try{if(roomChannel)client()?.removeChannel(roomChannel)}catch(_){ }
+   roomChannel=null;
+ }
+ async function publishRoom(code,isPrivate,mode){
+   if(typeof window.aecPublishRoom==='function')await window.aecPublishRoom(code,isPrivate,mode);
+ }
+ window.mpOnlineMenu=function(){
+   const area=$('mpArea');if(!area)return;
+   area.innerHTML='<div class="mp-status">Room aktif selama <b>5 menit</b>. Koneksi multiplayer menggunakan Supabase Realtime.</div><input id="mpName" class="select" placeholder="Username akun" maxlength="20" style="margin-top:7px"><div class="mp-actions" style="margin-top:7px"><select id="mpRoomVisibility" class="select"><option value="public">Ruang publik</option><option value="private">Ruang privat</option></select><select id="mpRoomMode" class="select"><option value="solo">Mode solo</option><option value="team">Mode team (5 tim × 2 pemain)</option></select><select id="mpSeatType" class="select"><option value="player">Masuk sebagai pemain</option><option value="spectator">Masuk sebagai penonton</option></select></div><div class="mp-actions" style="margin-top:7px"><button class="btn green" onclick="mpCreate()">➕ Buat Ruang</button><button class="btn blue" onclick="mpJoin()">🔗 Gabung Kode</button><button class="btn" onclick="aecShowPublicRooms()">🌐 Cari Room Publik</button></div><div id="aecPublicRooms"></div>';
+   try{const k=JSON.parse(localStorage.getItem('aec_current_v2')||'null'),a=JSON.parse(localStorage.getItem('aec_accounts_v2')||'{}');if($('mpName')&&a[k])$('mpName').value=a[k].nickname||a[k].username||''}catch(_){ }
+ };
+ window.mpCreate=async function(){
+   const m=window.mp,area=$('mpArea');if(!m||!area)return;if(m.__aecCreatingRoom)return;m.__aecCreatingRoom=true;
+   try{
+     window.__mpMode='online';window.startMusic?.();
+     let name=safeName($('mpName')?.value);if(!name){try{const k=JSON.parse(localStorage.getItem('aec_current_v2')||'null'),a=JSON.parse(localStorage.getItem('aec_accounts_v2')||'{}');name=safeName(a[k]?.nickname||a[k]?.username)}catch(_){}}
+     if(!name)throw new Error('Nama pemain belum diisi.');
+     m.__isPrivate=$('mpRoomVisibility')?.value==='private';m.__gameMode=$('mpRoomMode')?.value||'solo';m.spectators=[];m.mode='online';m.online=true;m.host=true;m.chat=[];m.bannedNames={};m.reconnectStates={};m.name=name;m.code=Array.from({length:6},()=> 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');m.roomDeadline=Date.now()+(window.ROOM||300000);window.aecCurrentRoomCode=m.code;
+     roomMyId=uuid();m.playerId=roomMyId;m.peer=null;m.conn=null;m.connections=[];area.innerHTML='<div class="mp-status">Menghubungkan ke Supabase Realtime…</div>';
+     await openRoomChannel(m.code,true);
+     window.state.onlinePlayers=[{id:m.playerId,name,host:true,team:m.__gameMode==='team'?1:null,pos:0,bronze:0,silver:0,gold:0,diamond:0,properties:{},passedStart:false,inJail:false,jailTurns:0,freeCards:0,bankDebt:{bronze:0,silver:0,gold:0},missedSpins:0}];
+     renderRoomArea(m.code,true);publishRoom(m.code,m.__isPrivate,m.__gameMode).catch(e=>{console.warn('Room listing sync:',e);toast('Room aktif, tetapi daftar room publik belum tersinkron: '+e.message)});
+   }catch(e){m.online=false;m.host=false;cleanupTransport();area.innerHTML='<div class="mp-status">Gagal membuat room: '+String(e.message||e)+'</div><button class="btn green" onclick="mpCreate()">Coba lagi</button>'}
+   finally{m.__aecCreatingRoom=false}
+ };
+ async function joinRoom(name,code,reconnect,spectator){
+   const m=window.mp,area=$('mpArea');name=safeName(name);code=String(code||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+   if(!name)throw new Error('Nama pemain belum diisi.');if(code.length!==6)throw new Error('Kode room harus 6 karakter.');
+   m.mode='online';window.__mpMode='online';m.online=true;m.host=false;m.chat=[];m.name=name;m.code=code;window.aecCurrentRoomCode=code;m.playerId=uuid();roomMyId=m.playerId;roomHostId=null;m.peer=null;
+   area.innerHTML='<div class="mp-code">'+code+'</div><div class="mp-status">Menghubungkan ke Supabase Realtime…</div><div class="mp-status">Menunggu host room…</div><div id="mpRoomTimer" class="mp-status"></div><div id="mpLobbyNet" class="mp-list"></div>';
+   await openRoomChannel(code,false);
+   const all=Object.values(roomChannel.presenceState()).flat();const host=all.find(x=>x&&x.host&&x.id!==roomMyId);
+   if(!host)throw new Error('Host belum online atau kode room tidak ditemukan. Pastikan host sudah membuat room.');
+   roomHostId=host.id;m.conn=pseudoConnection(roomHostId);m.conn.open=true;m.conn.playerId=roomHostId;
+   if(window.aecRegisterRoomSeat)window.aecRegisterRoomSeat(code,spectator?'spectator':'player').catch(()=>{});
+   sendWire(roomHostId,{type:spectator?'spectate':(reconnect?'reconnect':'join'),name,id:m.playerId});
+   renderRoomArea(code,false);m.roomDeadline=Date.now()+(window.ROOM||300000);window.roomTimer?.();
+ }
+ window.mpJoinByCode=async function(code){try{let name=safeName($('mpName')?.value);if(!name){try{const k=JSON.parse(localStorage.getItem('aec_current_v2')||'null'),a=JSON.parse(localStorage.getItem('aec_accounts_v2')||'{}');name=safeName(a[k]?.nickname||a[k]?.username)}catch(_){}}await joinRoom(name,code,false,$('mpSeatType')?.value==='spectator')}catch(e){cleanupTransport();toast('Gagal bergabung: '+e.message);const area=$('mpArea');if(area)area.innerHTML='<div class="mp-status">'+String(e.message||e)+'</div><button class="btn blue" onclick="mpOnlineMenu()">Kembali</button>'}};
+ window.mpJoin=async function(){const code=(prompt('Masukkan kode 6 karakter:')||'').trim();if(!code)return;await window.mpJoinByCode(code)};
+ window.mpReconnect=async function(){if(!window.mp?.name||!window.mp?.code){window.mpOnlineMenu();return}try{await joinRoom(window.mp.name,window.mp.code,true,false)}catch(e){toast('Reconnect gagal: '+e.message)}};
+ window.mpCopyCode=function(){const code=window.mp?.code||'';if(navigator.clipboard?.writeText)navigator.clipboard.writeText(code).then(()=>toast('Kode room disalin.')).catch(()=>prompt('Salin kode:',code));else prompt('Salin kode:',code)};
+ // Supabase-only transport: no PeerJS objects, scripts, or WebRTC connections are created.
+ window.__aecSupabaseRoomTransport={send:sendWire,cleanup:cleanupTransport,get channel(){return roomChannel}};
+ document.documentElement.style.touchAction='pan-x pan-y';document.body.style.touchAction='pan-x pan-y';
+ window.addEventListener('beforeunload',cleanupTransport);
 })();
 </script>
