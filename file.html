@@ -3705,14 +3705,24 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
      }
    });
    await new Promise((resolve,reject)=>{
-     let settled=false;const timer=setTimeout(()=>{if(!settled){settled=true;reject(new Error('Supabase Realtime tidak merespons dalam 12 detik. Periksa Realtime dan kebijakan akses project.'))}},12000);
+     let settled=false;const timer=setTimeout(()=>{if(!settled){settled=true;reject(new Error('Supabase Realtime belum merespons dalam 12 detik. Layar tetap responsif; periksa koneksi internet, status Realtime, dan kebijakan akses project lalu coba lagi.'))}},12000);
      channel.subscribe(status=>{
        if(status==='SUBSCRIBED'&&!settled){settled=true;clearTimeout(timer);resolve()}
        else if((status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED')&&!settled){settled=true;clearTimeout(timer);reject(new Error('Channel Supabase gagal: '+status))}
      });
    });
+   // Mark the channel usable immediately after SUBSCRIBED. Presence tracking is
+   // started separately with a bounded wait so a slow Presence ACK cannot keep
+   // the create/join flow stuck on the connecting screen.
    roomReady=true;
-   await channel.track({id:roomMyId,host:roomIsHost,name:window.mp.name||'Pemain',joined_at:new Date().toISOString()});
+   const presencePayload={id:roomMyId,host:roomIsHost,name:window.mp.name||'Pemain',joined_at:new Date().toISOString()};
+   let presenceDone=false;
+   try{
+     await Promise.race([
+       channel.track(presencePayload).then(()=>{presenceDone=true}),
+       wait(5000).then(()=>{if(!presenceDone)console.warn('Supabase Presence masih menunggu ACK; channel Realtime tetap aktif.')})
+     ]);
+   }catch(e){console.warn('Supabase Presence belum terkonfirmasi; channel tetap dipertahankan:',e)}
    return channel;
  }
  function cleanupTransport(){
@@ -3735,7 +3745,11 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
      let name=safeName($('mpName')?.value);if(!name){try{const k=JSON.parse(localStorage.getItem('aec_current_v2')||'null'),a=JSON.parse(localStorage.getItem('aec_accounts_v2')||'{}');name=safeName(a[k]?.nickname||a[k]?.username)}catch(_){}}
      if(!name)throw new Error('Nama pemain belum diisi.');
      m.__isPrivate=$('mpRoomVisibility')?.value==='private';m.__gameMode=$('mpRoomMode')?.value||'solo';m.spectators=[];m.mode='online';m.online=true;m.host=true;m.chat=[];m.bannedNames={};m.reconnectStates={};m.name=name;m.code=Array.from({length:6},()=> 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');m.roomDeadline=Date.now()+(window.ROOM||300000);window.aecCurrentRoomCode=m.code;
-     roomMyId=uuid();m.playerId=roomMyId;m.peer=null;m.conn=null;m.connections=[];area.innerHTML='<div class="mp-status">Menghubungkan ke Supabase Realtime…</div>';
+     roomMyId=uuid();m.playerId=roomMyId;m.peer=null;m.conn=null;m.connections=[];
+     area.innerHTML='<div class="mp-status" role="status" aria-live="polite">Menghubungkan ke Supabase Realtime…<br><small>Proses berjalan di latar belakang. Layar tetap bisa digeser dan digunakan.</small></div>';
+     // Yield one frame before starting network work so the browser can paint the
+     // status and keep touch/scroll interactions responsive.
+     await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
      await openRoomChannel(m.code,true);
      window.state.onlinePlayers=[{id:m.playerId,name,host:true,team:m.__gameMode==='team'?1:null,pos:0,bronze:0,silver:0,gold:0,diamond:0,properties:{},passedStart:false,inJail:false,jailTurns:0,freeCards:0,bankDebt:{bronze:0,silver:0,gold:0},missedSpins:0}];
      renderRoomArea(m.code,true);publishRoom(m.code,m.__isPrivate,m.__gameMode).catch(e=>{console.warn('Room listing sync:',e);toast('Room aktif, tetapi daftar room publik belum tersinkron: '+e.message)});
