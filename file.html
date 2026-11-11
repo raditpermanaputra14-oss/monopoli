@@ -2858,7 +2858,21 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
  window.aecMessages=async function(){const u=await uid();if(!u){if(oldMessages)oldMessages();return}const c=sb();try{const r=await c.from('inbox_messages').select('*').eq('recipient_id',u.id).order('created_at',{ascending:false}).limit(100);if(r.error)throw r.error;const items=(r.data||[]).filter(m=>m.kind!=='room_invite'||Date.now()-Date.parse(m.created_at)<60000);window.aecShow('Pesan & undangan',items.map(m=>`<div class="card-item"><b>${esc(m.kind||'Pesan')}</b><p>${esc(m.body||'')}</p>${m.room_code?`<p>Kode room: <b>${esc(m.room_code)}</b></p><button class="btn primary" onclick="aecJoinInvite('${esc(m.room_code)}')">Gabung room</button>`:''}${m.gems?`<button class="btn primary" onclick="aecClaimCloudGift('${m.id}')">Klaim ${Number(m.gems)} gems</button>`:''}<small>${new Date(m.created_at).toLocaleString()}</small></div>`).join('')||'<p>Tidak ada pesan.</p>');const ids=items.filter(m=>!m.read_at).map(m=>m.id);if(ids.length)await c.from('inbox_messages').update({read_at:new Date().toISOString()}).in('id',ids)}catch(e){window.aecToast('Gagal memuat pesan: '+e.message)}};
  window.aecClaimCloudGift=async function(id){const c=sb(),u=await uid();if(!u)return;try{const r=await c.rpc('claim_inbox_gift',{message_id:id});if(r.error)throw r.error;await refresh();window.aecToast('Hadiah berhasil diklaim.');window.aecMessages()}catch(e){window.aecToast('Klaim gagal: '+e.message)}};
  // Persist room presence metadata so public/private room discovery can be shared between devices.
- window.aecPublishRoom=async function(code,isPrivate,mode){const c=sb(),u=await uid();if(!u)return;const p=await me();const r=await c.from('game_rooms').upsert({room_code:String(code),host_id:u.id,host_username:p.username,is_private:!!isPrivate,game_mode:mode||'solo',status:'waiting',updated_at:new Date().toISOString()},{onConflict:'room_code'});if(r.error)throw r.error;await c.from('room_seats').upsert({room_code:String(code),user_id:u.id,seat_type:'player',team_no:mode==='team'?1:null},{onConflict:'room_code,user_id'});return r.data};
+ window.aecPublishRoom=async function(code,isPrivate,mode){
+   const c=sb();if(!c)throw new Error('Klien Supabase belum siap.');
+   const auth=await c.auth.getUser();if(auth.error)throw new Error('Pemeriksaan login Supabase gagal: '+auth.error.message);
+   const u=auth.data?.user;if(!u)throw new Error('Sesi login tidak ditemukan. Silakan login ulang.');
+   const p=await me();if(!p?.username)throw new Error('Profil akun tidak ditemukan atau kolom username kosong.');
+   const room={room_code:String(code),host_id:u.id,host_username:String(p.username),is_private:!!isPrivate,game_mode:mode||'solo',status:'waiting',updated_at:new Date().toISOString()};
+   const r=await c.from('game_rooms').insert(room).select('room_code').single();
+   if(r.error)throw new Error('Gagal menyimpan game_rooms ('+(r.error.code||'tanpa kode')+'): '+r.error.message);
+   const seat=await c.from('room_seats').insert({room_code:String(code),user_id:u.id,seat_type:'player',team_no:mode==='team'?1:null}).select('room_code').single();
+   if(seat.error){
+     try{await c.from('game_rooms').delete().eq('room_code',String(code)).eq('host_id',u.id)}catch(_){}
+     throw new Error('Room gagal mencatat kursi host di room_seats ('+(seat.error.code||'tanpa kode')+'): '+seat.error.message);
+   }
+   return r.data;
+ };
  window.aecRegisterRoomSeat=async function(code,seatType){const c=sb(),u=await uid();if(!u)return;const type=seatType==='spectator'?'spectator':'player';const r=await c.from('room_seats').upsert({room_code:String(code),user_id:u.id,seat_type:type,team_no:null},{onConflict:'room_code,user_id'});if(r.error)console.warn('room seat sync',r.error.message)};
  window.aecFindRooms=async function(){const c=sb();const freshAfter=new Date(Date.now()-5*60*1000).toISOString();const r=await c.from('game_rooms').select('room_code,host_username,game_mode,created_at').eq('is_private',false).eq('status','waiting').gte('updated_at',freshAfter).order('created_at',{ascending:false}).limit(50);if(r.error)throw r.error;return r.data||[]};
  window.aecShowPublicRooms=async function(){const el=document.getElementById('aecPublicRooms');if(!el)return;el.innerHTML='<p class="aec-muted">Memuat room publik…</p>';try{const rooms=await window.aecFindRooms();el.innerHTML=rooms.map(r=>`<div class="card-item"><b>${esc(r.host_username)}</b> · ${esc(r.game_mode==='team'?'Team beta':'Solo')}<br><small>Kode: ${esc(r.room_code)}</small> <button class="btn primary" onclick="mpJoinByCode('${esc(r.room_code)}')">Gabung</button></div>`).join('')||'<p>Tidak ada room publik yang menunggu.</p>'}catch(e){el.innerHTML='<p class="aec-muted">Gagal memuat room cloud: '+esc(e.message)+'<br><small>Jika tertulis infinite recursion, jalankan SQL perbaikan RLS yang disertakan.</small></p>'}};
@@ -3676,7 +3690,10 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
    try{window.roomTimer?.();window.renderLobbyNet?.();window.panel?.()}catch(_){ }
  }
  async function openRoomChannel(code,isHost){
-   const c=client();if(!c)throw new Error('Supabase belum terhubung. Login ulang dan periksa konfigurasi project.');
+   const c=client();if(!c)throw new Error('Klien Supabase belum siap. Login ulang dan periksa konfigurasi project.');
+   const auth=await c.auth.getUser();
+   if(auth.error)throw new Error('Gagal memeriksa sesi login Supabase: '+auth.error.message);
+   if(!auth.data?.user)throw new Error('Sesi login tidak ditemukan. Silakan login ulang sebelum membuat room.');
    try{if(roomChannel)c.removeChannel(roomChannel)}catch(_){ }
    roomMyId=roomMyId||uuid();roomIsHost=!!isHost;roomReady=false;hostConnections=new Map();
    const channel=c.channel('sos-room-'+String(code).toUpperCase(),{config:{broadcast:{self:false},presence:{key:roomMyId}}});
@@ -3705,10 +3722,10 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
      }
    });
    await new Promise((resolve,reject)=>{
-     let settled=false;const timer=setTimeout(()=>{if(!settled){settled=true;reject(new Error('Supabase Realtime tidak merespons dalam 8 detik. Room belum dibuat. Periksa URL dan publishable key Supabase, status layanan Realtime, serta koneksi internet; lalu tekan Coba lagi.'))}},8000);
-     channel.subscribe(status=>{
+     let settled=false;const timer=setTimeout(()=>{if(!settled){settled=true;reject(new Error('Supabase Realtime tidak merespons dalam 12 detik. Room belum dibuat. Periksa status layanan Realtime dan koneksi internet.'))}},12000);
+     channel.subscribe((status,error)=>{
        if(status==='SUBSCRIBED'&&!settled){settled=true;clearTimeout(timer);resolve()}
-       else if((status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED')&&!settled){settled=true;clearTimeout(timer);reject(new Error('Channel Supabase gagal: '+status))}
+       else if((status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED')&&!settled){settled=true;clearTimeout(timer);reject(new Error('Channel Supabase gagal: '+status+(error?.message?' — '+error.message:'')))}
      });
    });
    // Mark the channel usable immediately after SUBSCRIBED. Presence tracking is
@@ -3751,9 +3768,11 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
      // status and keep touch/scroll interactions responsive.
      await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
      await openRoomChannel(m.code,true);
+     // Simpan room dan kursi host secara terkonfirmasi sebelum menampilkan lobby.
+     await publishRoom(m.code,m.__isPrivate,m.__gameMode);
      window.state.onlinePlayers=[{id:m.playerId,name,host:true,team:m.__gameMode==='team'?1:null,pos:0,bronze:0,silver:0,gold:0,diamond:0,properties:{},passedStart:false,inJail:false,jailTurns:0,freeCards:0,bankDebt:{bronze:0,silver:0,gold:0},missedSpins:0}];
-     renderRoomArea(m.code,true);publishRoom(m.code,m.__isPrivate,m.__gameMode).catch(e=>{console.warn('Room listing sync:',e);toast('Room aktif, tetapi daftar room publik belum tersinkron: '+e.message)});
-   }catch(e){m.online=false;m.host=false;cleanupTransport();area.innerHTML='<div class="mp-status" role="alert"><b>Room belum berhasil dibuat.</b><br>'+String(e.message||e)+'</div><button class="btn green" onclick="mpCreate()">Coba lagi</button><button class="btn" onclick="mpOnlineMenu()">Kembali</button>'}
+     renderRoomArea(m.code,true);
+   }catch(e){m.online=false;m.host=false;window.aecCurrentRoomCode='';cleanupTransport();area.innerHTML='<div class="mp-status" role="alert"><b>Room belum berhasil dibuat.</b><br>'+String(e.message||e)+'</div><button class="btn green" onclick="mpCreate()">Coba lagi</button><button class="btn" onclick="mpOnlineMenu()">Kembali</button>'}
    finally{m.__aecCreatingRoom=false}
  };
  async function joinRoom(name,code,reconnect,spectator){
