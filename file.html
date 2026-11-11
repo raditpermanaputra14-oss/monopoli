@@ -2860,13 +2860,13 @@ window.mpAcceptOffer=function(ok){const o=mp.pendingOffer;mp.pendingOffer=null;c
  // Persist room presence metadata so public/private room discovery can be shared between devices.
  window.aecPublishRoom=async function(code,isPrivate,mode){
    const c=sb();if(!c)throw new Error('Klien Supabase belum siap.');
-   const auth=await c.auth.getUser();if(auth.error)throw new Error('Pemeriksaan login Supabase gagal: '+auth.error.message);
+   const auth=await Promise.race([c.auth.getUser(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Pemeriksaan sesi login Supabase melewati batas 8 detik. Koneksi ke layanan Auth tidak mendapat respons. Periksa internet atau status Supabase Auth.')),8000))]);if(auth.error)throw new Error('Pemeriksaan login Supabase gagal: '+auth.error.message);
    const u=auth.data?.user;if(!u)throw new Error('Sesi login tidak ditemukan. Silakan login ulang.');
-   const p=await me();if(!p?.username)throw new Error('Profil akun tidak ditemukan atau kolom username kosong.');
+   const p=await Promise.race([me(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Memuat profil akun melewati batas 8 detik. Supabase belum merespons.')),8000))]);if(!p?.username)throw new Error('Profil akun tidak ditemukan atau kolom username kosong.');
    const room={room_code:String(code),host_id:u.id,host_username:String(p.username),is_private:!!isPrivate,game_mode:mode||'solo',status:'waiting',updated_at:new Date().toISOString()};
-   const r=await c.from('game_rooms').insert(room).select('room_code').single();
+   const r=await Promise.race([c.from('game_rooms').insert(room).select('room_code').single(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Menyimpan game_rooms melewati batas 10 detik. Supabase Database tidak merespons.')),10000))]);
    if(r.error)throw new Error('Gagal menyimpan game_rooms ('+(r.error.code||'tanpa kode')+'): '+r.error.message);
-   const seat=await c.from('room_seats').insert({room_code:String(code),user_id:u.id,seat_type:'player',team_no:mode==='team'?1:null}).select('room_code').single();
+   const seat=await Promise.race([c.from('room_seats').insert({room_code:String(code),user_id:u.id,seat_type:'player',team_no:mode==='team'?1:null}).select('room_code').single(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Menyimpan room_seats melewati batas 10 detik. Supabase Database tidak merespons.')),10000))]);
    if(seat.error){
      try{await c.from('game_rooms').delete().eq('room_code',String(code)).eq('host_id',u.id)}catch(_){}
      throw new Error('Room gagal mencatat kursi host di room_seats ('+(seat.error.code||'tanpa kode')+'): '+seat.error.message);
